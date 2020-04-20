@@ -8,6 +8,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/datadog-agent/pkg/dogstatsd"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -117,6 +118,16 @@ var checkCmd = &cobra.Command{
 		s := serializer.NewSerializer(common.Forwarder)
 		// Initializing the aggregator with a flush interval of 0 (which disable the flush goroutine)
 		agg := aggregator.InitAggregatorWithFlushInterval(s, hostname, "agent", 0)
+
+		// start dogstatsd
+		if config.Datadog.GetBool("use_dogstatsd") {
+			var err error
+			common.DSD, err = dogstatsd.NewServer(agg)
+			if err != nil {
+				return fmt.Errorf("Cannot start dogstatsd: %s", err)
+			}
+		}
+
 		common.SetupAutoConfig(config.Datadog.GetString("confd_path"))
 
 		if config.Datadog.GetBool("inventories_enabled") {
@@ -138,11 +149,11 @@ var checkCmd = &cobra.Command{
 				fmt.Println("Please consider using the 'jmx' command instead of 'check jmx'")
 				selectedChecks := []string{checkName}
 				if checkRate {
-					if err := standalone.ExecJmxListWithRateMetricsJSON(selectedChecks, resolvedLogLevel); err != nil {
+					if err := standalone.ExecJmxListWithRateMetricsStatsd(selectedChecks, resolvedLogLevel); err != nil {
 						return fmt.Errorf("while running the jmx check: %v", err)
 					}
 				} else {
-					if err := standalone.ExecJmxListWithMetricsJSON(selectedChecks, resolvedLogLevel); err != nil {
+					if err := standalone.ExecJmxListWithMetricsStatsd(selectedChecks, resolvedLogLevel); err != nil {
 						return fmt.Errorf("while running the jmx check: %v", err)
 					}
 				}
@@ -155,6 +166,20 @@ var checkCmd = &cobra.Command{
 						continue
 					}
 					instances = append(instances, instance)
+				}
+
+				// Wait for JMX to send data to DSD
+				// TODO: Find a better to wait for DSD to receive metrics
+				time.Sleep(10 * time.Second)
+
+				if formatJSON {
+					aggregatorData := getMetricsData(agg)
+					instanceData := map[string]interface{}{
+						"aggregator": aggregatorData,
+					}
+					printInstancesDataAsJSON([]interface{}{instanceData})
+				} else {
+					printMetrics(agg)
 				}
 
 				if len(instances) == 0 {
@@ -372,9 +397,7 @@ var checkCmd = &cobra.Command{
 		}
 
 		if formatJSON {
-			fmt.Fprintln(color.Output, fmt.Sprintf("=== %s ===", color.BlueString("JSON")))
-			instancesJSON, _ := json.MarshalIndent(instancesData, "", "  ")
-			fmt.Println(string(instancesJSON))
+			printInstancesDataAsJSON(instancesData)
 		} else if singleCheckRun() {
 			if profileMemory {
 				color.Yellow("Check has run only once, to collect diff data run the check multiple times with the -t/--check-times flag.")
@@ -382,9 +405,14 @@ var checkCmd = &cobra.Command{
 				color.Yellow("Check has run only once, if some metrics are missing you can try again with --check-rate to see any other metric if available.")
 			}
 		}
-
 		return nil
 	},
+}
+
+func printInstancesDataAsJSON(instancesData []interface{}) {
+	fmt.Fprintln(color.Output, fmt.Sprintf("=== %s ===", color.BlueString("JSON")))
+	instancesJSON, _ := json.MarshalIndent(instancesData, "", "  ")
+	fmt.Println(string(instancesJSON))
 }
 
 func runCheck(c check.Check, agg *aggregator.BufferedAggregator) *check.Stats {
