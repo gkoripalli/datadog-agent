@@ -24,7 +24,6 @@ func CollectSystemInfo(cfg *config.AgentConfig) (*model.SystemInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("cpu info %v\n", cpuInfo)
 	mi, err := winutil.VirtualMemory()
 	if err != nil {
 		return nil, err
