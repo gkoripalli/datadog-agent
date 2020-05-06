@@ -405,6 +405,7 @@ var checkCmd = &cobra.Command{
 				color.Yellow("Check has run only once, if some metrics are missing you can try again with --check-rate to see any other metric if available.")
 			}
 		}
+
 		return nil
 	},
 }
